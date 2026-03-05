@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +45,7 @@ type Client struct {
 	http       *http.Client
 	baseURL    string
 	enterprise string
+	token      string // Bearer token for GitHub API
 	log        *slog.Logger
 	ccCache    *cache.Cache // optional cost center cache
 }
@@ -50,11 +53,12 @@ type Client struct {
 // NewClient creates a Client from a loaded config.Manager.
 //
 // Authentication is resolved in this order:
-//  1. GITHUB_TOKEN environment variable (set by gh CLI for extensions).
-//  2. GH_TOKEN environment variable.
+//  1. Explicit token passed via --token flag (stored in cfg.Token).
+//  2. GITHUB_TOKEN environment variable (set by gh CLI for extensions).
+//  3. GH_TOKEN environment variable.
+//  4. `gh auth token` shell-out (silent fallback if gh is installed).
 //
-// The caller typically does not need to set either variable manually
-// because `gh` injects the token when running extensions.
+// Returns an error if no token can be obtained.
 func NewClient(cfg *config.Manager, logger *slog.Logger) (*Client, error) {
 	if cfg.Enterprise == "" {
 		return nil, fmt.Errorf("enterprise slug is required")
@@ -62,12 +66,55 @@ func NewClient(cfg *config.Manager, logger *slog.Logger) (*Client, error) {
 
 	baseURL := strings.TrimRight(cfg.APIBaseURL, "/")
 
+	token := resolveToken(cfg.Token, logger)
+	if token == "" {
+		return nil, fmt.Errorf("no GitHub token found: set GITHUB_TOKEN, GH_TOKEN, use --token flag, or run 'gh auth login'")
+	}
+
+	logger.Debug("GitHub token resolved", "source", tokenSource(cfg.Token))
+
 	return &Client{
 		http:       &http.Client{Timeout: 30 * time.Second},
 		baseURL:    baseURL,
 		enterprise: cfg.Enterprise,
+		token:      token,
 		log:        logger,
 	}, nil
+}
+
+// resolveToken returns the first non-empty token from the chain:
+// flag → GITHUB_TOKEN → GH_TOKEN → gh auth token.
+func resolveToken(flagToken string, logger *slog.Logger) string {
+	if flagToken != "" {
+		return flagToken
+	}
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		return v
+	}
+	if v := os.Getenv("GH_TOKEN"); v != "" {
+		return v
+	}
+	// Fallback: try `gh auth token`.
+	out, err := exec.Command("gh", "auth", "token").Output()
+	if err != nil {
+		logger.Debug("gh auth token fallback failed", "error", err)
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// tokenSource returns a log-safe label describing where the token came from.
+func tokenSource(flagToken string) string {
+	if flagToken != "" {
+		return "--token flag"
+	}
+	if os.Getenv("GITHUB_TOKEN") != "" {
+		return "GITHUB_TOKEN env"
+	}
+	if os.Getenv("GH_TOKEN") != "" {
+		return "GH_TOKEN env"
+	}
+	return "gh auth token"
 }
 
 // SetCache attaches a cost center cache to the client.  When set, cost
@@ -187,6 +234,9 @@ func (c *Client) do(method, url string, body any) (*http.Response, error) {
 	req.Header.Set("Accept", acceptHeader)
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

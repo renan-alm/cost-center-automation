@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed — Complete Go Rewrite
 - **Full rewrite from Python to Go** — the tool is now a `gh` CLI extension (`gh-cost-center`)
-- Authentication via `gh auth login` (no more `GITHUB_TOKEN` env var)
+- Multi-source authentication: `--token` flag → `GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token`
+- Automatic `.env` file loading (does not override existing environment variables)
 - Install with `gh extension install renan-alm/gh-cost-center`
 - Plan/Apply workflow: `gh cost-center assign --mode plan|apply`
 - Structured logging via `log/slog`
@@ -18,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `gh cost-center assign` — PRU, Teams, and Repository modes with `--teams` / `--repo` flags
+- `--token` global flag — pass a GitHub token directly without environment variables
+- `.env` file auto-loading — supports `GITHUB_TOKEN`, `GH_TOKEN`, and other env vars
 - `gh cost-center list-users` — list Copilot licence holders
 - `gh cost-center config` — show resolved configuration
 - `gh cost-center report` — summary report (supports `--teams`)

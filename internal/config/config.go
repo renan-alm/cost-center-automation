@@ -72,6 +72,7 @@ type Manager struct {
 	LogLevel                        string
 	LogFile                         string
 	RepositoryConfig                *RepositoryConfig
+	Token                           string // Explicit token from --token flag
 
 	timestampFile string
 }
