@@ -1,6 +1,6 @@
 # gh-cost-center
 
-A [GitHub CLI](https://cli.github.com/) extension to automate Copilot cost center creation and syncing for your enterprise.
+A [GitHub CLI](https://cli.github.com/) extension to automate [GitHub Cost Center](https://docs.github.com/en/billing/concepts/cost-centers) creation and syncing for your enterprise.
 
 - **PRU-Based Mode**: Simple two-tier model (PRU overages allowed / not allowed)
 - **Teams-Based Mode**: Automatic assignment based on GitHub team membership
