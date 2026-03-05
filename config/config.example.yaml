@@ -1,7 +1,10 @@
 # ============================================================
 # gh-cost-center configuration
 # ============================================================
-# Authentication is handled by `gh auth login` — no token needed here.
+# Authentication: the CLI resolves a token automatically from
+#   1. --token flag  2. GITHUB_TOKEN env  3. GH_TOKEN env  4. gh auth token
+# A .env file in the working directory is also loaded (does not override
+# existing env vars). No token configuration is needed in this file.
 #
 # Copy this file to config/config.yaml and edit the values below.
 

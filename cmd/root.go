@@ -13,8 +13,9 @@ import (
 
 var (
 	// Global flags
-	cfgFile string
-	verbose bool
+	cfgFile   string
+	verbose   bool
+	tokenFlag string
 
 	// cfgManager is the loaded configuration, available to all subcommands.
 	cfgManager *config.Manager
@@ -76,6 +77,7 @@ Examples:
 			return fmt.Errorf("loading configuration: %w", err)
 		}
 		cfgManager = mgr
+		cfgManager.Token = tokenFlag
 		cfgManager.CheckConfigWarnings()
 		return nil
 	},
@@ -93,4 +95,5 @@ func Execute() {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "config/config.yaml", "configuration file path")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose (debug) logging")
+	rootCmd.PersistentFlags().StringVar(&tokenFlag, "token", "", "GitHub personal access token (overrides GITHUB_TOKEN, GH_TOKEN, and gh auth)")
 }

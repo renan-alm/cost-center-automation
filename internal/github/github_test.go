@@ -30,14 +30,15 @@ func newTestClient(t *testing.T, url string) *Client {
 		http:       &http.Client{Timeout: 5 * time.Second},
 		baseURL:    url,
 		enterprise: "test-ent",
+		token:      "test-token",
 		log:        testLogger(),
 	}
 }
 
 func TestNewClient(t *testing.T) {
 	logger := testLogger()
-	t.Run("success", func(t *testing.T) {
-		cfg := &config.Manager{Enterprise: "my-ent", APIBaseURL: "https://api.github.com"}
+	t.Run("success with flag token", func(t *testing.T) {
+		cfg := &config.Manager{Enterprise: "my-ent", APIBaseURL: "https://api.github.com", Token: "flag-token"}
 		c, err := NewClient(cfg, logger)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -48,9 +49,34 @@ func TestNewClient(t *testing.T) {
 		if c.baseURL != "https://api.github.com" {
 			t.Errorf("baseURL = %q", c.baseURL)
 		}
+		if c.token != "flag-token" {
+			t.Errorf("token = %q, want %q", c.token, "flag-token")
+		}
+	})
+	t.Run("success with env token", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "env-token")
+		cfg := &config.Manager{Enterprise: "my-ent", APIBaseURL: "https://api.github.com"}
+		c, err := NewClient(cfg, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.token != "env-token" {
+			t.Errorf("token = %q, want %q", c.token, "env-token")
+		}
+	})
+	t.Run("flag token beats env", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "env-token")
+		cfg := &config.Manager{Enterprise: "ent", APIBaseURL: "https://api.github.com", Token: "flag-wins"}
+		c, err := NewClient(cfg, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.token != "flag-wins" {
+			t.Errorf("token = %q, want %q", c.token, "flag-wins")
+		}
 	})
 	t.Run("trailing slash stripped", func(t *testing.T) {
-		cfg := &config.Manager{Enterprise: "ent", APIBaseURL: "https://api.github.com/"}
+		cfg := &config.Manager{Enterprise: "ent", APIBaseURL: "https://api.github.com/", Token: "t"}
 		c, err := NewClient(cfg, logger)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -60,10 +86,29 @@ func TestNewClient(t *testing.T) {
 		}
 	})
 	t.Run("empty enterprise", func(t *testing.T) {
-		cfg := &config.Manager{Enterprise: "", APIBaseURL: "https://api.github.com"}
+		cfg := &config.Manager{Enterprise: "", APIBaseURL: "https://api.github.com", Token: "t"}
 		_, err := NewClient(cfg, logger)
 		if err == nil {
 			t.Fatal("expected error for empty enterprise")
+		}
+	})
+	t.Run("no token available", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "")
+		t.Setenv("GH_TOKEN", "")
+		// NOTE: if `gh` CLI is installed and authenticated, the `gh auth token`
+		// fallback will succeed and this won't error. We test both outcomes.
+		cfg := &config.Manager{Enterprise: "ent", APIBaseURL: "https://api.github.com"}
+		c, err := NewClient(cfg, logger)
+		if err != nil {
+			// Expected path when gh is not available.
+			if !strings.Contains(err.Error(), "no GitHub token found") {
+				t.Errorf("error = %v, want 'no GitHub token found'", err)
+			}
+		} else {
+			// gh auth token fallback succeeded — token should be non-empty.
+			if c.token == "" {
+				t.Error("NewClient succeeded but token is empty")
+			}
 		}
 	})
 }
@@ -182,6 +227,9 @@ func TestDoJSON_Success(t *testing.T) {
 		}
 		if r.Header.Get("X-GitHub-Api-Version") != apiVersion {
 			t.Errorf("X-GitHub-Api-Version = %q", r.Header.Get("X-GitHub-Api-Version"))
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer test-token")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload{Name: "Alice", Age: 30})

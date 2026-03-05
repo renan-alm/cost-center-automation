@@ -1,6 +1,8 @@
 # gh-cost-center
 
-A [GitHub CLI](https://cli.github.com/) extension to automate Copilot cost center creation and syncing for your enterprise.
+A [GitHub CLI](https://cli.github.com/) extension to automate [GitHub Cost Center](https://docs.github.com/en/billing/concepts/cost-centers) creation and syncing for your enterprise.
+
+Originally based on [GitHub Cost Center Automation](https://github.com/github/cost-center-automation) project.
 
 - **PRU-Based Mode**: Simple two-tier model (PRU overages allowed / not allowed)
 - **Teams-Based Mode**: Automatic assignment based on GitHub team membership
@@ -13,7 +15,7 @@ A [GitHub CLI](https://cli.github.com/) extension to automate Copilot cost cente
 gh extension install renan-alm/gh-cost-center
 ```
 
-Requires a working `gh auth login` session with an account that has enterprise billing admin access.
+Requires a GitHub token with enterprise billing admin access (see [Authentication](#authentication) below).
 
 ## Quick Start
 
@@ -74,6 +76,27 @@ gh cost-center version
 ### Cache
 
 Cost center lookups are cached in `.cache/cost_centers.json` with a 24-hour TTL to reduce API calls on repeated runs.
+
+## Authentication
+
+The CLI resolves a GitHub token using the first available source (in order):
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | `--token` flag | `gh cost-center assign --token ghp_xxx ...` |
+| 2 | `GITHUB_TOKEN` env var | `export GITHUB_TOKEN=ghp_xxx` |
+| 3 | `GH_TOKEN` env var | `export GH_TOKEN=ghp_xxx` |
+| 4 | `gh auth token` (shell-out) | Automatic if `gh auth login` was run |
+
+### `.env` file support
+
+A `.env` file in the working directory is loaded automatically. Existing environment variables are **not** overwritten — session values always take precedence.
+
+```bash
+# .env
+GITHUB_TOKEN=ghp_xxx
+GITHUB_ENTERPRISE=your-enterprise
+```
 
 ## Configuration
 
@@ -168,7 +191,7 @@ github:
 
 | Issue | Solution |
 |-------|----------|
-| 401 / 403 errors | Run `gh auth login` and ensure the account has enterprise billing admin access |
+| 401 / 403 errors | Ensure a valid token is available via `--token`, `GITHUB_TOKEN`, `GH_TOKEN`, `.env`, or `gh auth login`. The token must have enterprise billing admin access. |
 | No teams found | Verify account has `read:org` access for the target orgs |
 | Cost center creation fails | Ensure enterprise billing admin permissions |
 
