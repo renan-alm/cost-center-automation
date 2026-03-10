@@ -186,6 +186,24 @@ func runPRUAssign(cmd *cobra.Command) error {
 				"pru_allowed", pruAllowedID,
 			)
 		}
+	} else if assignMode != "plan" {
+		// Without auto-create, resolve names to UUIDs.
+		logger.Info("Resolving cost center names to IDs...")
+		noPRUID, pruAllowedID, err := client.ResolveCostCenters(
+			cfgManager.NoPRUsCostCenterName,
+			cfgManager.PRUsAllowedCostCenterName,
+		)
+		if err != nil {
+			return fmt.Errorf("resolving cost centers: %w", err)
+		}
+		cfgManager.NoPRUsCostCenterID = noPRUID
+		cfgManager.PRUsAllowedCostCenterID = pruAllowedID
+		mgr.SetCostCenterIDs(noPRUID, pruAllowedID)
+
+		logger.Info("Resolved cost center IDs",
+			"no_pru", noPRUID,
+			"pru_allowed", pruAllowedID,
+		)
 	}
 
 	// Filter to specific users if --users flag was provided.

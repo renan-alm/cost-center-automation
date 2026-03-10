@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -283,6 +284,19 @@ func (m *Manager) resolveTeamsMode() error {
 
 	if m.TeamsStrategy != "auto" && m.TeamsStrategy != "manual" {
 		return fmt.Errorf("invalid cost_center.teams.strategy %q: must be 'auto' or 'manual'", m.TeamsStrategy)
+	}
+
+	// Warn about mapping values that don't look like UUIDs when auto-create
+	// is disabled. These will be resolved by name at runtime, but a mismatch
+	// will cause a failure.
+	if !m.TeamsAutoCreate && m.TeamsStrategy == "manual" {
+		for teamKey, ccValue := range m.TeamsMappings {
+			if !looksLikeUUID(ccValue) {
+				m.log.Warn("Mapping value is not a UUID — it will be resolved by name against existing cost centers at runtime",
+					"mapping", teamKey, "value", ccValue,
+					"hint", "if this is a cost center name, ensure it matches exactly as shown in enterprise billing settings")
+			}
+		}
 	}
 
 	m.log.Info("Teams mode enabled",
@@ -568,4 +582,14 @@ func defaultString(val, def string) string {
 		return val
 	}
 	return def
+}
+
+// uuidPattern matches a standard UUID format (lowercase hex).
+var uuidPattern = regexp.MustCompile(
+	`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`,
+)
+
+// looksLikeUUID returns true if the string matches UUID format.
+func looksLikeUUID(s string) bool {
+	return uuidPattern.MatchString(strings.ToLower(s))
 }

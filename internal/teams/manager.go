@@ -337,16 +337,14 @@ func (m *Manager) BuildTeamAssignments() (map[string][]UserAssignment, error) {
 }
 
 // EnsureCostCentersExist ensures all required cost centers exist, creating
-// them if auto-create is enabled.  Returns a map of ccName -> ccID and a set
-// of newly-created cost center IDs.
+// them if auto-create is enabled.  When auto-create is disabled, cost center
+// names are resolved to UUIDs by looking up existing cost centers — the sync
+// is aborted if any name cannot be resolved.
+//
+// Returns a map of ccName -> ccID and a set of newly-created cost center IDs.
 func (m *Manager) EnsureCostCentersExist(ccNames []string) (map[string]string, map[string]bool, error) {
 	if !m.autoCreate {
-		m.log.Info("Auto-creation disabled, assuming cost center IDs are valid")
-		identity := make(map[string]string, len(ccNames))
-		for _, n := range ccNames {
-			identity[n] = n
-		}
-		return identity, nil, nil
+		return m.resolveCostCenters(ccNames)
 	}
 
 	m.log.Info("Ensuring cost centers exist", "count", len(ccNames))
@@ -405,6 +403,44 @@ func (m *Manager) EnsureCostCentersExist(ccNames []string) (map[string]string, m
 	return ccMap, newlyCreated, nil
 }
 
+// resolveCostCenters resolves cost center names to UUIDs without creating
+// any new cost centers.  This is used when auto-create is disabled.
+// All names must resolve or the method returns an error listing the failures.
+func (m *Manager) resolveCostCenters(ccNames []string) (map[string]string, map[string]bool, error) {
+	m.log.Info("Auto-creation disabled, resolving cost center names to IDs", "count", len(ccNames))
+
+	activeMap, err := m.client.GetAllActiveCostCenters()
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching active cost centers for resolution: %w", err)
+	}
+	m.log.Info("Fetched active cost centers for resolution", "count", len(activeMap))
+
+	ccMap := make(map[string]string, len(ccNames))
+	var unresolved []string
+
+	for _, name := range ccNames {
+		if id, ok := activeMap[name]; ok {
+			ccMap[name] = id
+			m.log.Debug("Resolved cost center", "name", name, "id", id)
+			continue
+		}
+		unresolved = append(unresolved, name)
+		m.log.Error("Cost center not found", "name", name)
+	}
+
+	if len(unresolved) > 0 {
+		return nil, nil, fmt.Errorf(
+			"cost center(s) not found: %s — verify the names match exactly as they appear "+
+				"in GitHub Enterprise billing settings, or enable auto_create_cost_centers "+
+				"to create them automatically",
+			strings.Join(unresolved, ", "),
+		)
+	}
+
+	m.log.Info("All cost centers resolved successfully", "count", len(ccMap))
+	return ccMap, nil, nil
+}
+
 // SyncTeamAssignments is the main orchestration function.  In plan mode it
 // previews changes; in apply mode it pushes assignments to GitHub Enterprise
 // and optionally removes users who left teams.
@@ -430,12 +466,20 @@ func (m *Manager) SyncTeamAssignments(mode string, ignoreCurrentCC bool) (map[st
 	var newlyCreated map[string]bool
 
 	if mode == "plan" {
-		ccMap = make(map[string]string, len(ccNames))
-		for _, n := range ccNames {
-			ccMap[n] = n
+		// In plan mode, still resolve names to verify they exist.
+		ccMap, _, err = m.resolveCostCenters(ccNames)
+		if err != nil {
+			// In plan mode, log warning instead of failing — names may not
+			// exist yet if auto-create would be used in apply mode.
+			m.log.Warn("Plan mode: some cost centers could not be resolved",
+				"error", err)
+			ccMap = make(map[string]string, len(ccNames))
+			for _, n := range ccNames {
+				ccMap[n] = n
+			}
 		}
 		newlyCreated = make(map[string]bool)
-		m.log.Info("Plan mode: would ensure cost centers exist", "count", len(ccNames))
+		m.log.Info("Plan mode: verified cost centers", "count", len(ccNames))
 	} else {
 		ccMap, newlyCreated, err = m.EnsureCostCentersExist(ccNames)
 		if err != nil {
@@ -549,7 +593,16 @@ func (m *Manager) handleUserRemoval(
 	for ccID, expectedUsers := range toCheck {
 		currentMembers, err := m.client.GetCostCenterMembers(ccID)
 		if err != nil {
-			m.log.Error("Failed to get cost center members", "cc", ccID, "error", err)
+			displayName := idToName[ccID]
+			if displayName == "" {
+				displayName = ccID
+			}
+			if github.IsCostCenterNotFound(err) {
+				m.log.Error("Cost center not found during user removal check — it may have been deleted from enterprise billing",
+					"cost_center", displayName, "id", ccID, "error", err)
+			} else {
+				m.log.Error("Failed to get cost center members", "cc", ccID, "error", err)
+			}
 			continue
 		}
 

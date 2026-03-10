@@ -87,7 +87,9 @@ cost_center:
   #   # Strategy: "auto" (one CC per team) or "manual" (use mappings below)
   #   strategy: "auto"
   #
-  #   # Automatically create cost centers for new teams
+  #   # Automatically create cost centers for new teams.
+  #   # When false, names are resolved to UUIDs via the billing API
+  #   # without creating them. The sync aborts if any name is not found.
   #   auto_create: true
   #
   #   # Remove users from CCs when they leave the team

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 )
 
 // costCentersListResponse is the JSON envelope for the list endpoint.
@@ -60,6 +61,46 @@ var uuidFromConflictRe = regexp.MustCompile(
 	`(?i)existing cost center UUID:\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})`,
 )
 
+// uuidRe matches a standard UUID format.
+var uuidRe = regexp.MustCompile(
+	`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`,
+)
+
+// IsCostCenterNotFound returns true if the error is a 404 API error
+// for a cost center lookup.
+func IsCostCenterNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+}
+
+// IsValidCostCenterUUID returns true if the string is a valid UUID format.
+func IsValidCostCenterUUID(id string) bool {
+	return uuidRe.MatchString(id)
+}
+
+// ValidateCostCenterID returns an error if the given ID is not a valid UUID.
+// This catches the common misconfiguration where a cost center name is used
+// in place of a UUID.
+func ValidateCostCenterID(id string) error {
+	if IsValidCostCenterUUID(id) {
+		return nil
+	}
+	for _, r := range id {
+		if r > 127 {
+			return fmt.Errorf(
+				"cost center ID %q is not a valid UUID and contains non-ASCII characters — "+
+					"this looks like a cost center name, not an ID; enable auto_create_cost_centers "+
+					"or use the UUID from enterprise billing settings",
+				id)
+		}
+	}
+	return fmt.Errorf(
+		"cost center ID %q is not a valid UUID — "+
+			"this may be a cost center name instead of an ID; enable auto_create_cost_centers "+
+			"or use the UUID from enterprise billing settings",
+		id)
+}
+
 // GetAllActiveCostCenters returns a map of cost center name → ID for all
 // active cost centers in the enterprise.
 func (c *Client) GetAllActiveCostCenters() (map[string]string, error) {
@@ -87,6 +128,9 @@ func (c *Client) GetAllActiveCostCenters() (map[string]string, error) {
 // GetCostCenter returns the details of a single cost center including its
 // assigned resources.
 func (c *Client) GetCostCenter(id string) (*costCenterDetailResponse, error) {
+	if err := ValidateCostCenterID(id); err != nil {
+		return nil, err
+	}
 	url := c.enterpriseURL(fmt.Sprintf("/settings/billing/cost-centers/%s", id))
 	var resp costCenterDetailResponse
 	if _, err := c.doJSON(http.MethodGet, url, nil, &resp); err != nil {
@@ -218,6 +262,40 @@ func (c *Client) EnsureCostCentersExist(noPRUName, pruAllowedName string) (noPRU
 	return noPRUID, pruAllowedID, nil
 }
 
+// ResolveCostCenters resolves two cost center names to UUIDs without creating
+// them.  Returns an error listing any names that could not be found.
+func (c *Client) ResolveCostCenters(noPRUName, pruAllowedName string) (noPRUID, pruAllowedID string, err error) {
+	c.log.Info("Resolving cost center names to IDs (no creation)")
+
+	activeMap, err := c.GetAllActiveCostCenters()
+	if err != nil {
+		return "", "", fmt.Errorf("fetching active cost centers for resolution: %w", err)
+	}
+
+	var unresolved []string
+
+	noPRUID, ok := activeMap[noPRUName]
+	if !ok {
+		unresolved = append(unresolved, noPRUName)
+	}
+
+	pruAllowedID, ok = activeMap[pruAllowedName]
+	if !ok {
+		unresolved = append(unresolved, pruAllowedName)
+	}
+
+	if len(unresolved) > 0 {
+		return "", "", fmt.Errorf(
+			"cost center(s) not found: %s — verify the names match exactly as they appear "+
+				"in GitHub Enterprise billing settings, or use --create-cost-centers to create them automatically",
+			strings.Join(unresolved, ", "),
+		)
+	}
+
+	c.log.Info("Cost centers resolved", "no_pru_id", noPRUID, "pru_allowed_id", pruAllowedID)
+	return noPRUID, pruAllowedID, nil
+}
+
 // AddUsersToCostCenter adds a batch of usernames to a cost center.  The GitHub
 // API allows a maximum of 50 users per request, so this method handles chunking
 // transparently.
@@ -231,11 +309,21 @@ func (c *Client) AddUsersToCostCenter(costCenterID string, usernames []string, i
 		return map[string]bool{}, nil
 	}
 
+	if err := ValidateCostCenterID(costCenterID); err != nil {
+		return nil, err
+	}
+
 	results := make(map[string]bool, len(usernames))
 
 	// Check which users are already in the target cost center.
 	currentMembers, err := c.GetCostCenterMembers(costCenterID)
 	if err != nil {
+		if IsCostCenterNotFound(err) {
+			return nil, fmt.Errorf(
+				"cost center ID %q not found — verify the cost center exists in enterprise billing settings, "+
+					"or enable auto_create_cost_centers to create it automatically: %w",
+				costCenterID, err)
+		}
 		return nil, fmt.Errorf("checking cost center members: %w", err)
 	}
 	memberSet := toSet(currentMembers)
@@ -315,7 +403,14 @@ func (c *Client) BulkUpdateCostCenterAssignments(assignments map[string][]string
 
 		ccResults, err := c.AddUsersToCostCenter(ccID, usernames, ignoreCurrentCC)
 		if err != nil {
-			c.log.Error("Failed to update cost center assignments", "cost_center_id", ccID, "error", err)
+			if IsCostCenterNotFound(err) {
+				c.log.Error("Cost center not found — this usually means a cost center name was used instead of a UUID",
+					"cost_center_id", ccID,
+					"hint", "enable auto_create_cost_centers or verify the ID in enterprise billing settings",
+					"error", err)
+			} else {
+				c.log.Error("Failed to update cost center assignments", "cost_center_id", ccID, "error", err)
+			}
 			ccResults = make(map[string]bool, len(usernames))
 			for _, u := range usernames {
 				ccResults[u] = false
@@ -343,6 +438,10 @@ func (c *Client) BulkUpdateCostCenterAssignments(assignments map[string][]string
 func (c *Client) RemoveUsersFromCostCenter(costCenterID string, usernames []string) (map[string]bool, error) {
 	if len(usernames) == 0 {
 		return map[string]bool{}, nil
+	}
+
+	if err := ValidateCostCenterID(costCenterID); err != nil {
+		return nil, err
 	}
 
 	url := c.enterpriseURL(fmt.Sprintf("/settings/billing/cost-centers/%s/resource", costCenterID))

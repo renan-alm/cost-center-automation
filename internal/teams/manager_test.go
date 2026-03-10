@@ -188,7 +188,23 @@ func TestBuildTeamAssignments_LastTeamWins(t *testing.T) {
 }
 
 func TestEnsureCostCentersExist_AutoCreateDisabled(t *testing.T) {
+	// When auto-create is disabled and no client is available,
+	// EnsureCostCentersExist will attempt to resolve names via the API.
+	// With no client, it should return an error (not an identity map).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"costCenters": []map[string]string{
+				{"id": "uuid-a", "name": "cc-a", "state": "active"},
+				{"id": "uuid-b", "name": "cc-b", "state": "active"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
 	mgr := newTestManager("organization", "auto", nil, nil, false, false)
+	mgr.client = client
 
 	ccMap, newlyCreated, err := mgr.EnsureCostCentersExist([]string{"cc-a", "cc-b"})
 	if err != nil {
@@ -197,9 +213,9 @@ func TestEnsureCostCentersExist_AutoCreateDisabled(t *testing.T) {
 	if newlyCreated != nil {
 		t.Error("expected nil newlyCreated when auto-create is disabled")
 	}
-	// Should return identity map.
-	if ccMap["cc-a"] != "cc-a" || ccMap["cc-b"] != "cc-b" {
-		t.Errorf("expected identity map, got %v", ccMap)
+	// Should return resolved UUIDs, not identity map.
+	if ccMap["cc-a"] != "uuid-a" || ccMap["cc-b"] != "uuid-b" {
+		t.Errorf("expected resolved UUIDs, got %v", ccMap)
 	}
 }
 
@@ -427,5 +443,99 @@ func TestCreateBudgetsForNewCCs_APIUnavailable(t *testing.T) {
 	)
 	if err != nil {
 		t.Errorf("expected nil error for API unavailable, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// EnsureCostCentersExist — resolve-without-create
+// ---------------------------------------------------------------------------
+
+func TestEnsureCostCentersExist_ResolvesNames(t *testing.T) {
+	// API returns two active cost centers.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"costCenters": []map[string]string{
+				{"id": "uuid-aaa", "name": "CC Alpha", "state": "active"},
+				{"id": "uuid-bbb", "name": "CC Beta", "state": "active"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	mgr := newTestManager("organization", "manual", []string{"org1"},
+		map[string]string{"org1/team-a": "CC Alpha"}, false, false)
+	mgr.client = client
+
+	ccMap, newlyCreated, err := mgr.EnsureCostCentersExist([]string{"CC Alpha", "CC Beta"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if newlyCreated != nil {
+		t.Error("expected nil newlyCreated for resolve-only path")
+	}
+	if ccMap["CC Alpha"] != "uuid-aaa" {
+		t.Errorf("CC Alpha: got %q, want uuid-aaa", ccMap["CC Alpha"])
+	}
+	if ccMap["CC Beta"] != "uuid-bbb" {
+		t.Errorf("CC Beta: got %q, want uuid-bbb", ccMap["CC Beta"])
+	}
+}
+
+func TestEnsureCostCentersExist_UnresolvedNamesFail(t *testing.T) {
+	// API returns only one cost center.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"costCenters": []map[string]string{
+				{"id": "uuid-aaa", "name": "CC Alpha", "state": "active"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	mgr := newTestManager("organization", "manual", []string{"org1"}, nil, false, false)
+	mgr.client = client
+
+	_, _, err := mgr.EnsureCostCentersExist([]string{"CC Alpha", "CC Missing", "CC Also Missing"})
+	if err == nil {
+		t.Fatal("expected error for unresolved cost centers")
+	}
+	if !strings.Contains(err.Error(), "CC Missing") {
+		t.Errorf("error should mention CC Missing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "CC Also Missing") {
+		t.Errorf("error should mention CC Also Missing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "auto_create_cost_centers") {
+		t.Errorf("error should suggest enabling auto_create: %v", err)
+	}
+}
+
+func TestEnsureCostCentersExist_SpecialCharsInName(t *testing.T) {
+	// Cost center with special characters should resolve fine by name.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"costCenters": []map[string]string{
+				{"id": "uuid-xyz", "name": "3956_IT-Würth_IT", "state": "active"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	mgr := newTestManager("organization", "manual", []string{"org1"},
+		map[string]string{"org1/users": "3956_IT-Würth_IT"}, false, false)
+	mgr.client = client
+
+	ccMap, _, err := mgr.EnsureCostCentersExist([]string{"3956_IT-Würth_IT"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ccMap["3956_IT-Würth_IT"] != "uuid-xyz" {
+		t.Errorf("got %q, want uuid-xyz", ccMap["3956_IT-Würth_IT"])
 	}
 }

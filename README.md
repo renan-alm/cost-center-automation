@@ -148,6 +148,8 @@ Cost center naming:
 - Organization scope: `[org team] {org}/{team}`
 - Enterprise scope: `[enterprise team] {team}`
 
+When `auto_create: false`, cost center names are **resolved** to UUIDs via the billing API (not created). If any name cannot be found, the sync aborts with an actionable error. This applies to both `auto` and `manual` strategies.
+
 ### Repos Mode
 
 ```yaml
@@ -231,6 +233,8 @@ Partial failures (e.g., 2 of 10 users failed to assign) produce exit code `1` wi
 | 401 / 403 errors | Ensure a valid token is available via `--token`, `GITHUB_TOKEN`, `GH_TOKEN`, `.env`, or `gh auth login`. The token must have enterprise billing admin access. |
 | No teams found | Verify account has `read:org` access for the target orgs |
 | Cost center creation fails | Ensure enterprise billing admin permissions |
+| Cost center not found (404) with `auto_create: false` | Cost center names are resolved to UUIDs via the API. If a name can't be found, the sync aborts with an error listing unresolved names. Verify the name matches exactly in **Settings → Billing → Cost Centers**, or enable `auto_create: true`. |
+| Special characters in cost center names (ü, ö, ä) | Names with non-ASCII characters work correctly — they are resolved to UUIDs before API calls, so special characters never appear in API URLs. |
 | Exit code 1 on partial failures | Expected behavior — some user assignments or budget creations failed. Check the error summary for details. |
 | Budget API unavailable (404) | The Budgets API may not be enabled for your enterprise. Budget creation is skipped gracefully with a warning. |
 

@@ -339,6 +339,27 @@ cost_center:
 	}
 }
 
+func TestLooksLikeUUID(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"d1e2f3a4-b5c6-7890-abcd-ef1234567890", true},
+		{"D1E2F3A4-B5C6-7890-ABCD-EF1234567890", true},
+		{"3956_IT-Würth_IT", false},
+		{"my-cost-center", false},
+		{"[org team] my-org/devs", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := looksLikeUUID(tt.input); got != tt.want {
+				t.Errorf("looksLikeUUID(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------- Repos mode ----------
 
 func TestLoad_ReposMode(t *testing.T) {

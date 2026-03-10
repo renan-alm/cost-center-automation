@@ -98,6 +98,8 @@ gh cost-center assign --mode plan
 | `organization` | `[org team] {org}/{team}` | `[org team] my-org/frontend` |
 | `enterprise` | `[enterprise team] {team}` | `[enterprise team] platform` |
 
+> **Tip:** When `auto_create: false`, cost centers are resolved by name instead of created. The sync aborts if any auto-generated name doesn't match an existing cost center.
+
 ---
 
 ## 3. Teams — Manual Strategy
@@ -139,6 +141,25 @@ gh cost-center assign --mode plan
 | my-org/backend | CC-Backend |
 | my-org/infra | CC-Platform |
 | Teams not listed | Skipped |
+
+### Using `auto_create: false`
+
+When you set `auto_create: false`, cost centers are **not** created — names are resolved to UUIDs via the billing API. If any name doesn't match an existing cost center, the sync aborts with an actionable error.
+
+This is useful when cost centers are pre-created by a billing admin and the tool should only assign users, never create new cost centers.
+
+```yaml
+cost_center:
+  mode: "teams"
+  teams:
+    strategy: "manual"
+    auto_create: false          # resolve names → UUIDs, never create
+    mappings:
+      "my-org/frontend": "CC-Frontend"
+      "my-org/backend": "CC-Backend"
+```
+
+> **Note:** Mapping values should be the **display names** of existing cost centers (not UUIDs). The tool resolves them automatically. If a name contains special characters (e.g., ü, ö, ä), it works the same way — names are resolved before any API calls are made.
 
 ---
 

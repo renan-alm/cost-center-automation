@@ -578,6 +578,173 @@ func TestCreateCostCenter_Conflict(t *testing.T) {
 	}
 }
 
+func TestValidateCostCenterID(t *testing.T) {
+	tests := []struct {
+		name    string
+		id      string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid UUID",
+			id:      "d1e2f3a4-b5c6-7890-abcd-ef1234567890",
+			wantErr: false,
+		},
+		{
+			name:    "name with special characters",
+			id:      "3956_IT-Würth_IT",
+			wantErr: true,
+			errMsg:  "non-ASCII",
+		},
+		{
+			name:    "plain name without special chars",
+			id:      "my-cost-center",
+			wantErr: true,
+			errMsg:  "not a valid UUID",
+		},
+		{
+			name:    "name with spaces and brackets",
+			id:      "[org team] my-org/devs",
+			wantErr: true,
+			errMsg:  "not a valid UUID",
+		},
+		{
+			name:    "name with umlauts",
+			id:      "Büro-IT-Abteilung",
+			wantErr: true,
+			errMsg:  "non-ASCII",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCostCenterID(tt.id)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestIsCostCenterNotFound(t *testing.T) {
+	t.Run("404 APIError", func(t *testing.T) {
+		err := &APIError{StatusCode: 404, Body: "not found"}
+		if !IsCostCenterNotFound(err) {
+			t.Error("expected true for 404 APIError")
+		}
+	})
+	t.Run("500 APIError", func(t *testing.T) {
+		err := &APIError{StatusCode: 500, Body: "internal"}
+		if IsCostCenterNotFound(err) {
+			t.Error("expected false for 500 APIError")
+		}
+	})
+	t.Run("wrapped 404", func(t *testing.T) {
+		inner := &APIError{StatusCode: 404, Body: "not found"}
+		err := fmt.Errorf("outer: %w", inner)
+		if !IsCostCenterNotFound(err) {
+			t.Error("expected true for wrapped 404")
+		}
+	})
+	t.Run("non-API error", func(t *testing.T) {
+		err := fmt.Errorf("connection refused")
+		if IsCostCenterNotFound(err) {
+			t.Error("expected false for non-API error")
+		}
+	})
+}
+
+func TestResolveCostCenters(t *testing.T) {
+	t.Run("both found", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(costCentersListResponse{CostCenters: []CostCenter{
+				{ID: "uuid-1", Name: "No PRU", State: "active"},
+				{ID: "uuid-2", Name: "PRU Allowed", State: "active"},
+			}})
+		}))
+		defer srv.Close()
+		c := newTestClient(t, srv.URL)
+		noPRU, pruAllowed, err := c.ResolveCostCenters("No PRU", "PRU Allowed")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if noPRU != "uuid-1" {
+			t.Errorf("noPRU = %q", noPRU)
+		}
+		if pruAllowed != "uuid-2" {
+			t.Errorf("pruAllowed = %q", pruAllowed)
+		}
+	})
+
+	t.Run("one missing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(costCentersListResponse{CostCenters: []CostCenter{
+				{ID: "uuid-1", Name: "No PRU", State: "active"},
+			}})
+		}))
+		defer srv.Close()
+		c := newTestClient(t, srv.URL)
+		_, _, err := c.ResolveCostCenters("No PRU", "Missing CC")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "Missing CC") {
+			t.Errorf("error should mention Missing CC: %v", err)
+		}
+		if !strings.Contains(err.Error(), "create-cost-centers") {
+			t.Errorf("error should suggest --create-cost-centers: %v", err)
+		}
+	})
+
+	t.Run("both missing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(costCentersListResponse{CostCenters: []CostCenter{}})
+		}))
+		defer srv.Close()
+		c := newTestClient(t, srv.URL)
+		_, _, err := c.ResolveCostCenters("No PRU", "PRU Allowed")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "No PRU") || !strings.Contains(err.Error(), "PRU Allowed") {
+			t.Errorf("error should mention both missing names: %v", err)
+		}
+	})
+}
+
+func TestAddUsersToCostCenter_InvalidID(t *testing.T) {
+	c := newTestClient(t, "http://unused")
+	_, err := c.AddUsersToCostCenter("not-a-uuid", []string{"alice"}, true)
+	if err == nil {
+		t.Fatal("expected error for invalid ID")
+	}
+	if !strings.Contains(err.Error(), "not a valid UUID") {
+		t.Errorf("error should mention invalid UUID: %v", err)
+	}
+}
+
+func TestGetCostCenter_InvalidID(t *testing.T) {
+	c := newTestClient(t, "http://unused")
+	_, err := c.GetCostCenter("Würth-IT")
+	if err == nil {
+		t.Fatal("expected error for invalid ID with special chars")
+	}
+	if !strings.Contains(err.Error(), "non-ASCII") {
+		t.Errorf("error should mention non-ASCII: %v", err)
+	}
+}
+
 func TestListBudgets_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
