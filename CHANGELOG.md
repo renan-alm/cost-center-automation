@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 18 new test cases covering name resolution, UUID validation, special characters (ü), and 404 error classification
 
 ## [2.0.0] - 2026-03-05
+## [2.1.0] - 2026-03-10
+
+### Other
+
+- passed directly as UUIDs in API URLs, causing 404 errors. Names are now (7af8f73)
+
 
 ### Changed — Complete Go Rewrite
 - **Full rewrite from Python to Go** — the tool is now a `gh` CLI extension (`gh-cost-center`)
