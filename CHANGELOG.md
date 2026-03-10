@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Added fallback context in teams manager** — WARN log when falling back to cost center name as ID
 
 ### Fixed — Cost Center Name→UUID Resolution
-- **`auto_create: false` now resolves names to UUIDs** — when `auto_create` is disabled (teams and PRU modes), cost center names are resolved to UUIDs via the billing API instead of being passed directly in API URLs. Previously, names like `"3956_IT-Würth_IT"` were sent as UUIDs, causing 404 errors.
+- **`auto_create: false` now resolves names to UUIDs** — when `auto_create` is disabled (teams and PRU modes), cost center names are resolved to UUIDs via the billing API instead of being passed directly in API URLs. Previously, names containing `"ü"` were sent as UUIDs, causing 404 errors.
 - **Sync aborts on unresolved names** — if any cost center name cannot be resolved, the sync fails fast with an actionable error listing all unresolved names and suggesting to enable `auto_create` or verify names in billing settings
 - **UUID validation guards on API calls** — `GetCostCenter()`, `AddUsersToCostCenter()`, and `RemoveUsersFromCostCenter()` now validate that IDs look like UUIDs before making HTTP requests; non-UUID values (including those with special characters like ü, ö, ä) are rejected with a descriptive error
 - **Actionable 404 error messages** — cost-center-not-found errors now include guidance ("may have been deleted or renamed — verify in billing settings")
@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 18 new test cases covering name resolution, UUID validation, special characters (ü), and 404 error classification
 
 ## [2.0.0] - 2026-03-05
+## [2.1.0] - 2026-03-10
+
+### Other
+
+- d156052ec16e6e072d111457c5493aa09a202477\ntest: Add early return statements to test functions\n\n---COMMIT_END--- (e6cc549)
+
 ## [2.1.0] - 2026-03-10
 
 ### Other

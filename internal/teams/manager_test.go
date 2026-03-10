@@ -520,7 +520,7 @@ func TestEnsureCostCentersExist_SpecialCharsInName(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"costCenters": []map[string]string{
-				{"id": "uuid-xyz", "name": "3956_IT-Würth_IT", "state": "active"},
+				{"id": "uuid-xyz", "name": "42_Ölbrück-Straße", "state": "active"},
 			},
 		})
 	}))
@@ -528,14 +528,14 @@ func TestEnsureCostCentersExist_SpecialCharsInName(t *testing.T) {
 
 	client := newTestClientFromURL(t, srv.URL)
 	mgr := newTestManager("organization", "manual", []string{"org1"},
-		map[string]string{"org1/users": "3956_IT-Würth_IT"}, false, false)
+		map[string]string{"org1/users": "42_Ölbrück-Straße"}, false, false)
 	mgr.client = client
 
-	ccMap, _, err := mgr.EnsureCostCentersExist([]string{"3956_IT-Würth_IT"})
+	ccMap, _, err := mgr.EnsureCostCentersExist([]string{"42_Ölbrück-Straße"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ccMap["3956_IT-Würth_IT"] != "uuid-xyz" {
-		t.Errorf("got %q, want uuid-xyz", ccMap["3956_IT-Würth_IT"])
+	if ccMap["42_Ölbrück-Straße"] != "uuid-xyz" {
+		t.Errorf("got %q, want uuid-xyz", ccMap["42_Ölbrück-Straße"])
 	}
 }

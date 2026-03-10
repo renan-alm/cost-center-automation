@@ -592,7 +592,7 @@ func TestValidateCostCenterID(t *testing.T) {
 		},
 		{
 			name:    "name with special characters",
-			id:      "3956_IT-Würth_IT",
+			id:      "42_Ölbrück-Straße",
 			wantErr: true,
 			errMsg:  "non-ASCII",
 		},
@@ -736,7 +736,7 @@ func TestAddUsersToCostCenter_InvalidID(t *testing.T) {
 
 func TestGetCostCenter_InvalidID(t *testing.T) {
 	c := newTestClient(t, "http://unused")
-	_, err := c.GetCostCenter("Würth-IT")
+	_, err := c.GetCostCenter("Ölbrück-Straße")
 	if err == nil {
 		t.Fatal("expected error for invalid ID with special chars")
 	}
