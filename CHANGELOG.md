@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — Error Propagation & Exit Codes
+- **Partial assignment failures now exit 1** — `logAssignmentResults` returns an error when any user assignments fail, so CI/CD pipelines correctly detect incomplete runs
+- **`EnsureBudgetsForCostCenter` returns errors** — per-product budget failures are accumulated and propagated to callers instead of being silently logged; `BudgetsAPIUnavailableError` still triggers graceful degradation (returns nil)
+- **Scanner errors in confirmation prompts** — `confirmApply()` and repo/custom-prop prompts now check `scanner.Err()` and return I/O failures instead of silently aborting
+- **Timestamp save errors propagated** — failure to save the run timestamp now returns an error (exit 1) instead of only logging
+- **Version command uses `RunE`** — `cmd/version.go` returns errors on I/O failures (missing VERSION file still falls back to `"dev"`)
+- **Removed duplicate SIGPIPE handler** — consolidated from `internal/logging/logger.go` into `main.go` only
+
+### Fixed — Logging Consistency
+- **Eliminated triple-logging on assignment failures** — consolidated to one ERROR per cost center (with user list) and one summary line; removed redundant WARN
+- **`.env` parse failure promoted to ERROR** — was incorrectly logged as WARN
+- **Standardized `mode=plan` log messages** — all plan-mode messages now use `"mode=plan: would <action>"` format
+- **Consolidated duplicate deduplication logs** — merged WARN + INFO into a single INFO with all metrics
+- **Cache log levels lowered to DEBUG** — `Cache cleared` and `Cleanup complete` now use DEBUG, consistent with other cache operations
+- **Added fallback context in teams manager** — WARN log when falling back to cost center name as ID
+
+### Added
+- Comprehensive test coverage for error propagation: budget manager, teams, repository, customprop, cmd/assign, cmd/version, and logging packages
+
 ## [2.0.0] - 2026-03-05
 
 ### Changed — Complete Go Rewrite

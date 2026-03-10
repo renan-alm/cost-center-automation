@@ -4,7 +4,9 @@
 package budgets
 
 import (
+	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/renan-alm/gh-cost-center/internal/config"
 	"github.com/renan-alm/gh-cost-center/internal/github"
@@ -33,14 +35,16 @@ func (m *Manager) IsAvailable() bool {
 }
 
 // EnsureBudgetsForCostCenter creates all enabled product budgets for a cost center.
-// If the budgets API is unavailable, it sets a flag and returns early.
-func (m *Manager) EnsureBudgetsForCostCenter(ccID, ccName string) {
+// If the budgets API is unavailable, it sets a flag and returns nil (graceful degradation).
+// Individual product creation failures are accumulated and returned as a single error.
+func (m *Manager) EnsureBudgetsForCostCenter(ccID, ccName string) error {
 	if m.unavailable {
-		return
+		return nil
 	}
 
 	m.log.Info("Creating budgets for cost center", "name", ccName)
 
+	var failures []string
 	for product, pc := range m.products {
 		if !pc.Enabled {
 			m.log.Debug("Skipping disabled product budget", "product", product)
@@ -53,10 +57,11 @@ func (m *Manager) EnsureBudgetsForCostCenter(ccID, ccName string) {
 				m.log.Warn("Budgets API unavailable, disabling budget creation",
 					"error", err)
 				m.unavailable = true
-				return
+				return nil
 			}
 			m.log.Error("Failed to create budget",
 				"product", product, "cost_center", ccName, "error", err)
+			failures = append(failures, fmt.Sprintf("%s: %v", product, err))
 			continue
 		}
 		if ok {
@@ -64,4 +69,9 @@ func (m *Manager) EnsureBudgetsForCostCenter(ccID, ccName string) {
 				"product", product, "cost_center", ccName, "amount", pc.Amount)
 		}
 	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("budget creation failed for cost center %s: %s", ccName, strings.Join(failures, "; "))
+	}
+	return nil
 }

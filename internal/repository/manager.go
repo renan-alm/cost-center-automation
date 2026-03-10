@@ -203,7 +203,7 @@ func (m *Manager) processMapping(
 		result.Success = true
 		result.Message = fmt.Sprintf("would assign %d repositories (plan mode)", len(matching))
 
-		m.log.Info("MODE=plan: would assign repos",
+		m.log.Info("mode=plan: would assign repos",
 			"cost_center", mp.CostCenter, "count", len(matching))
 		for _, r := range matching {
 			m.log.Debug("Would assign", "repo", r.RepositoryFullName, "cost_center", mp.CostCenter)
@@ -228,7 +228,11 @@ func (m *Manager) processMapping(
 
 		// Create budgets if enabled.
 		if createBudgets && m.cfg.BudgetsEnabled {
-			m.createBudgets(ccID, mp.CostCenter)
+			if err := m.createBudgets(ccID, mp.CostCenter); err != nil {
+				result.Message = fmt.Sprintf("budget creation failed: %v", err)
+				m.log.Error("Budget creation failed for cost center", "name", mp.CostCenter, "error", err)
+				return result
+			}
 		}
 	} else {
 		m.log.Info("Cost center already exists", "name", mp.CostCenter, "id", ccID)
@@ -281,9 +285,10 @@ func (m *Manager) processMapping(
 }
 
 // createBudgets creates configured budgets for a single cost center.
-func (m *Manager) createBudgets(ccID, ccName string) {
+func (m *Manager) createBudgets(ccID, ccName string) error {
 	m.log.Info("Creating budgets for cost center", "name", ccName)
 
+	var failures []string
 	for product, pc := range m.cfg.BudgetProducts {
 		if !pc.Enabled {
 			m.log.Debug("Skipping disabled product budget", "product", product)
@@ -296,10 +301,11 @@ func (m *Manager) createBudgets(ccID, ccName string) {
 			if _, unavailable := err.(*github.BudgetsAPIUnavailableError); unavailable {
 				m.log.Warn("Budgets API unavailable, skipping remaining budgets",
 					"error", err)
-				return
+				return nil
 			}
 			m.log.Error("Failed to create budget",
 				"product", product, "cost_center", ccName, "error", err)
+			failures = append(failures, fmt.Sprintf("%s: %v", product, err))
 			continue
 		}
 		if ok {
@@ -307,6 +313,11 @@ func (m *Manager) createBudgets(ccID, ccName string) {
 				"product", product, "cost_center", ccName, "amount", pc.Amount)
 		}
 	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("budget creation failed for cost center %s: %s", ccName, strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 // findMatchingRepos returns repos whose custom properties match the mapping criteria.

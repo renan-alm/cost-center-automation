@@ -125,11 +125,10 @@ func deduplicateUsers(users []CopilotUser, logger *slog.Logger) []CopilotUser {
 		for _, v := range dupCounts {
 			total += v
 		}
-		logger.Warn("Detected and skipped duplicate seat entries",
-			"duplicate_entries", total,
-			"unique_users_affected", len(dupCounts),
+		logger.Info("Deduplicated Copilot seats",
+			"duplicates_removed", total,
+			"unique_users", len(unique),
 		)
-		logger.Info("Unique Copilot users after deduplication", "count", len(unique))
 	}
 	return unique
 }

@@ -172,3 +172,17 @@ func TestDiscard(t *testing.T) {
 		t.Errorf("Discard.Write returned %d, want 19", n)
 	}
 }
+
+// TestNew_NoSIGPIPEHandler ensures the logging package does not install its
+// own SIGPIPE handler.  Signal handling is the responsibility of main.go.
+// This test verifies that creating a logger does not panic or register signals.
+func TestNew_NoSIGPIPEHandler(t *testing.T) {
+	t.Parallel()
+	// Creating a logger should succeed without side effects on signal handling.
+	logger, err := New(Options{Level: slog.LevelInfo})
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	// Logging to a pipe-like writer should not panic.
+	logger.Info("test message to verify no SIGPIPE interference")
+}

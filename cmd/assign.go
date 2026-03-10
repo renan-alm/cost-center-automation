@@ -151,7 +151,7 @@ func runPRUAssign(cmd *cobra.Command) error {
 				logger.Info("No new users found since last run — nothing to process")
 				if assignMode == "apply" {
 					if err := cfgManager.SaveLastRunTimestamp(nil); err != nil {
-						logger.Error("Failed to save timestamp", "error", err)
+						return fmt.Errorf("saving run timestamp: %w", err)
 					}
 				}
 				return nil
@@ -164,9 +164,9 @@ func runPRUAssign(cmd *cobra.Command) error {
 	// Auto-create cost centers if requested.
 	if autoCreate {
 		if assignMode == "plan" {
-			logger.Info("MODE=plan: Would create cost centers if they don't exist")
-			logger.Info("Would create", "no_pru", cfgManager.NoPRUsCostCenterName)
-			logger.Info("Would create", "pru_allowed", cfgManager.PRUsAllowedCostCenterName)
+			logger.Info("mode=plan: Would create cost centers if they don't exist")
+			logger.Info("mode=plan: Would create", "no_pru", cfgManager.NoPRUsCostCenterName)
+			logger.Info("mode=plan: Would create", "pru_allowed", cfgManager.PRUsAllowedCostCenterName)
 		} else {
 			logger.Info("Creating cost centers if they don't exist...")
 			noPRUID, pruAllowedID, err := client.EnsureCostCentersExist(
@@ -202,7 +202,7 @@ func runPRUAssign(cmd *cobra.Command) error {
 
 	// Log individual assignments in plan mode.
 	if assignMode == "plan" {
-		logger.Info("MODE=plan (no changes will be made)")
+		logger.Info("mode=plan: no changes will be made")
 		for _, u := range users {
 			cc := mgr.AssignCostCenter(u)
 			logger.Debug("Would assign", "user", u.Login, "cc", cc)
@@ -226,7 +226,11 @@ func runPRUAssign(cmd *cobra.Command) error {
 	} else {
 		// Apply mode — safety confirmation unless --yes.
 		if !assignYes {
-			if !confirmApply(groups, assignCheckCurrentCC) {
+			proceed, err := confirmApply(groups, assignCheckCurrentCC)
+			if err != nil {
+				return fmt.Errorf("confirmation failed: %w", err)
+			}
+			if !proceed {
 				logger.Warn("Aborted by user before applying assignments")
 				return nil
 			}
@@ -253,16 +257,17 @@ func runPRUAssign(cmd *cobra.Command) error {
 			assignmentResults = results
 
 			// Process and log results.
-			logAssignmentResults(results, logger)
+			if err := logAssignmentResults(results, logger); err != nil {
+				return err
+			}
 		}
 
 		// Save timestamp for incremental processing.
 		if assignIncremental {
 			if err := cfgManager.SaveLastRunTimestamp(nil); err != nil {
-				logger.Error("Failed to save timestamp", "error", err)
-			} else {
-				logger.Info("Saved current timestamp for next incremental run")
+				return fmt.Errorf("saving run timestamp: %w", err)
 			}
+			logger.Info("Saved current timestamp for next incremental run")
 		}
 	}
 
@@ -277,8 +282,9 @@ func runPRUAssign(cmd *cobra.Command) error {
 	return nil
 }
 
-// confirmApply shows a confirmation prompt and returns true if the user types "apply".
-func confirmApply(groups map[string][]string, checkCurrent bool) bool {
+// confirmApply shows a confirmation prompt and returns true if the user types "yes".
+// It returns an error if reading from stdin fails.
+func confirmApply(groups map[string][]string, checkCurrent bool) (bool, error) {
 	fmt.Println("\nYou are about to APPLY cost center assignments to GitHub Enterprise.")
 	fmt.Println("This will push assignments for ALL processed users (no diff).")
 
@@ -296,13 +302,18 @@ func confirmApply(groups map[string][]string, checkCurrent bool) bool {
 	fmt.Print("\nProceed? (yes/no): ")
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
-		return strings.TrimSpace(strings.ToLower(scanner.Text())) == "yes"
+		return strings.TrimSpace(strings.ToLower(scanner.Text())) == "yes", nil
 	}
-	return false
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("reading user input: %w", err)
+	}
+	return false, nil
 }
 
 // logAssignmentResults logs per-cost-center and overall success/failure counts.
-func logAssignmentResults(results map[string]map[string]bool, logger *slog.Logger) {
+// It returns an error when one or more user assignments failed so the caller
+// can propagate a non-zero exit code.
+func logAssignmentResults(results map[string]map[string]bool, logger *slog.Logger) error {
 	totalAttempted := 0
 	totalSuccessful := 0
 	totalFailed := 0
@@ -320,18 +331,18 @@ func logAssignmentResults(results map[string]map[string]bool, logger *slog.Logge
 		totalFailed += ccFailed
 
 		if ccFailed > 0 {
-			logger.Warn("Cost center partial success",
-				"cost_center_id", ccID,
-				"successful", ccSuccessful,
-				"total", len(userResults),
-			)
 			var failedUsers []string
 			for username, ok := range userResults {
 				if !ok {
 					failedUsers = append(failedUsers, username)
 				}
 			}
-			logger.Error("Failed users", "cost_center_id", ccID, "users", strings.Join(failedUsers, ", "))
+			logger.Error("Cost center assignment failures",
+				"cost_center_id", ccID,
+				"successful", ccSuccessful,
+				"failed", ccFailed,
+				"failed_users", strings.Join(failedUsers, ", "),
+			)
 		} else {
 			logger.Info("Cost center all successful",
 				"cost_center_id", ccID,
@@ -341,16 +352,18 @@ func logAssignmentResults(results map[string]map[string]bool, logger *slog.Logge
 	}
 
 	if totalFailed > 0 {
-		logger.Warn("FINAL RESULT",
+		logger.Error("Assignment incomplete",
 			"successful", totalSuccessful,
 			"total", totalAttempted,
 			"failed", totalFailed,
 		)
-	} else {
-		logger.Info("FINAL RESULT: All users successfully assigned",
-			"count", totalSuccessful,
-		)
+		return fmt.Errorf("assignment incomplete: %d/%d users failed", totalFailed, totalAttempted)
 	}
+
+	logger.Info("All users successfully assigned",
+		"count", totalSuccessful,
+	)
+	return nil
 }
 
 // runTeamsAssign implements the teams-based assignment flow.
@@ -394,7 +407,9 @@ func runTeamsAssign(_ *cobra.Command) error {
 			logger.Info("Teams assignment completed")
 		}
 		if results != nil {
-			logAssignmentResults(results, logger)
+			if err := logAssignmentResults(results, logger); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -435,11 +450,16 @@ func runRepoAssign(_ *cobra.Command) error {
 	if assignMode == "apply" && !assignYes {
 		fmt.Print("\nProceed with APPLY? (yes/no): ")
 		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			if strings.TrimSpace(strings.ToLower(scanner.Text())) != "yes" {
-				logger.Warn("Aborted by user")
-				return nil
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("reading user confirmation: %w", err)
 			}
+			logger.Warn("Aborted by user")
+			return nil
+		}
+		if strings.TrimSpace(strings.ToLower(scanner.Text())) != "yes" {
+			logger.Warn("Aborted by user")
+			return nil
 		}
 	}
 
@@ -489,11 +509,16 @@ func runCustomPropAssign(_ *cobra.Command) error {
 	if assignMode == "apply" && !assignYes {
 		fmt.Print("\nProceed with APPLY? (yes/no): ")
 		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			if strings.TrimSpace(strings.ToLower(scanner.Text())) != "yes" {
-				logger.Warn("Aborted by user")
-				return nil
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("reading user confirmation: %w", err)
 			}
+			logger.Warn("Aborted by user")
+			return nil
+		}
+		if strings.TrimSpace(strings.ToLower(scanner.Text())) != "yes" {
+			logger.Warn("Aborted by user")
+			return nil
 		}
 	}
 

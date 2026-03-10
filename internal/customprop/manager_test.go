@@ -1,8 +1,12 @@
 package customprop
 
 import (
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/renan-alm/gh-cost-center/internal/config"
@@ -478,5 +482,124 @@ func TestMatchesValue_Array(t *testing.T) {
 func TestMatchesValue_OtherType(t *testing.T) {
 	if matchesValue(42, "42") {
 		t.Error("expected no match for non-string/non-array type")
+	}
+}
+
+// testLogger returns a quiet logger for test usage.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// newTestClientFromURL creates a github.Client pointing at the given httptest server URL.
+func newTestClientFromURL(t *testing.T, url string) *github.Client {
+	t.Helper()
+	cfg := &config.Manager{
+		Enterprise: "test-ent",
+		APIBaseURL: url,
+		Token:      "test-token",
+	}
+	c, err := github.NewClient(cfg, testLogger())
+	if err != nil {
+		t.Fatalf("creating test client: %v", err)
+	}
+	return c
+}
+
+// newTestManagerWithClient builds a Manager with a real client and budget products.
+func newTestManagerWithClient(t *testing.T, client *github.Client, products map[string]config.ProductBudget) *Manager {
+	t.Helper()
+	cfg := &config.Manager{
+		BudgetsEnabled: true,
+		BudgetProducts: products,
+	}
+	return &Manager{
+		cfg:    cfg,
+		client: client,
+		log:    testLogger(),
+	}
+}
+
+func TestCreateBudgets_AllSucceed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"budgets": []any{}})
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: true},
+	}
+	mgr := newTestManagerWithClient(t, client, products)
+
+	err := mgr.createBudgets("cc-id-1", "Test CC")
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+}
+
+func TestCreateBudgets_PartialFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"budgets": []any{}})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"bad request"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: true},
+	}
+	mgr := newTestManagerWithClient(t, client, products)
+
+	err := mgr.createBudgets("cc-id-1", "Fail CC")
+	if err == nil {
+		t.Fatal("expected error for budget creation failure")
+	}
+	if !strings.Contains(err.Error(), "budget creation failed for cost center Fail CC") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestCreateBudgets_APIUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: true},
+	}
+	mgr := newTestManagerWithClient(t, client, products)
+
+	// 404 triggers BudgetsAPIUnavailableError — graceful degradation, returns nil.
+	err := mgr.createBudgets("cc-id-1", "Test CC")
+	if err != nil {
+		t.Errorf("expected nil error for API unavailable, got %v", err)
+	}
+}
+
+func TestCreateBudgets_DisabledProducts(t *testing.T) {
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: false},
+	}
+	mgr := &Manager{
+		cfg: &config.Manager{BudgetProducts: products},
+		log: testLogger(),
+	}
+
+	err := mgr.createBudgets("cc-id-1", "Test CC")
+	if err != nil {
+		t.Errorf("expected nil error when all products disabled, got %v", err)
 	}
 }

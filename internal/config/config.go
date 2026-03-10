@@ -140,7 +140,7 @@ func loadDotEnv(configPath string, logger *slog.Logger) {
 			return false
 		}
 		if err := godotenv.Load(envPath); err != nil {
-			logger.Warn("Found .env but failed to load", "path", envPath, "error", err)
+			logger.Error("Found .env but failed to load", "path", envPath, "error", err)
 			return false
 		}
 		logger.Debug("Loaded environment file", "path", envPath)

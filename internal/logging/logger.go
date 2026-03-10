@@ -11,10 +11,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // Options controls the behaviour of the logger returned by New.
@@ -28,10 +26,8 @@ type Options struct {
 }
 
 // New creates a new slog.Logger with a console handler (stderr) and, if
-// Options.FilePath is set, an additional file handler.  It also installs a
-// SIGPIPE handler to exit cleanly when the output pipe is closed.
+// Options.FilePath is set, an additional file handler.
 func New(opts Options) (*slog.Logger, error) {
-	installSIGPIPEHandler()
 
 	// Console handler (stderr) at the configured level.
 	consoleHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -76,17 +72,6 @@ func ParseLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
-}
-
-// installSIGPIPEHandler exits cleanly when the output pipe is closed (e.g.
-// `gh cost-center list-users | head`).
-func installSIGPIPEHandler() {
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGPIPE)
-	go func() {
-		<-ch
-		os.Exit(0)
-	}()
 }
 
 // multiHandler fans out log records to multiple slog.Handler implementations.

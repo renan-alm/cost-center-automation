@@ -151,7 +151,7 @@ func (c *Cache) Clear() error {
 	defer c.mu.Unlock()
 
 	c.data.Entries = make(map[string]Entry)
-	c.log.Info("Cache cleared")
+	c.log.Debug("Cache cleared")
 
 	if err := os.Remove(c.filePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing cache file: %w", err)
@@ -180,7 +180,7 @@ func (c *Cache) CleanupExpired() (int, error) {
 		}
 	}
 
-	c.log.Info("Cleanup complete", "removed", removed, "remaining", len(c.data.Entries))
+	c.log.Debug("Cleanup complete", "removed", removed, "remaining", len(c.data.Entries))
 	return removed, nil
 }
 
@@ -196,7 +196,7 @@ func (c *Cache) load() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var d cacheData
 	if err := json.NewDecoder(f).Decode(&d); err != nil {
@@ -229,7 +229,7 @@ func (c *Cache) save() error {
 	if err != nil {
 		return fmt.Errorf("creating cache file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")

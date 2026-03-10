@@ -1,8 +1,12 @@
 package teams
 
 import (
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/renan-alm/gh-cost-center/internal/config"
@@ -289,5 +293,139 @@ func TestFetchTeamMembers_EnterpriseCacheKey(t *testing.T) {
 	}
 	if len(members) != 1 || members[0] != "carol" {
 		t.Errorf("unexpected members: %v", members)
+	}
+}
+
+// testLogger returns a quiet logger for test usage.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// newTestClientFromURL creates a github.Client pointing at the given httptest server URL.
+func newTestClientFromURL(t *testing.T, url string) *github.Client {
+	t.Helper()
+	cfg := &config.Manager{
+		Enterprise: "test-enterprise",
+		APIBaseURL: url,
+		Token:      "test-token",
+	}
+	c, err := github.NewClient(cfg, testLogger())
+	if err != nil {
+		t.Fatalf("creating test client: %v", err)
+	}
+	return c
+}
+
+// newTestManagerWithClient builds a Manager with a real github.Client and budget config.
+func newTestManagerWithClient(client *github.Client, products map[string]config.ProductBudget) *Manager {
+	logger := testLogger()
+	cfg := &config.Manager{
+		TeamsScope:    "organization",
+		TeamsStrategy: "auto",
+		Enterprise:    "test-enterprise",
+	}
+	mgr := &Manager{
+		cfg:            cfg,
+		client:         client,
+		log:            logger,
+		scope:          "organization",
+		mode:           "auto",
+		createBudgets:  true,
+		budgetProducts: products,
+		teamsCache:     make(map[string][]github.Team),
+		membersCache:   make(map[string][]string),
+		ccNameCache:    make(map[string]string),
+	}
+	return mgr
+}
+
+func TestCreateBudgetsForNewCCs_NoProducts(t *testing.T) {
+	mgr := newTestManagerWithClient(nil, nil)
+	// Empty products should return nil immediately.
+	err := mgr.createBudgetsForNewCCs(
+		map[string]string{"CC A": "cc-id-a"},
+		map[string]bool{"cc-id-a": true},
+	)
+	if err != nil {
+		t.Errorf("expected nil error with no products, got %v", err)
+	}
+}
+
+func TestCreateBudgetsForNewCCs_AllSucceed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"budgets": []any{}})
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: true},
+	}
+	mgr := newTestManagerWithClient(client, products)
+
+	err := mgr.createBudgetsForNewCCs(
+		map[string]string{"CC A": "cc-id-a"},
+		map[string]bool{"cc-id-a": true},
+	)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+}
+
+func TestCreateBudgetsForNewCCs_PartialFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"budgets": []any{}})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"bad request"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: true},
+	}
+	mgr := newTestManagerWithClient(client, products)
+
+	err := mgr.createBudgetsForNewCCs(
+		map[string]string{"CC A": "cc-id-a"},
+		map[string]bool{"cc-id-a": true},
+	)
+	if err == nil {
+		t.Fatal("expected error for budget creation failure")
+	}
+	if !strings.Contains(err.Error(), "budget creation failures") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestCreateBudgetsForNewCCs_APIUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"not found"}`))
+	}))
+	defer srv.Close()
+
+	client := newTestClientFromURL(t, srv.URL)
+	products := map[string]config.ProductBudget{
+		"actions": {Amount: 100, Enabled: true},
+	}
+	mgr := newTestManagerWithClient(client, products)
+
+	// 404 triggers BudgetsAPIUnavailableError — should return nil (graceful degradation).
+	err := mgr.createBudgetsForNewCCs(
+		map[string]string{"CC A": "cc-id-a"},
+		map[string]bool{"cc-id-a": true},
+	)
+	if err != nil {
+		t.Errorf("expected nil error for API unavailable, got %v", err)
 	}
 }

@@ -378,6 +378,7 @@ func (m *Manager) EnsureCostCentersExist(ccNames []string) (map[string]string, m
 		id, err := m.client.CreateCostCenterWithPreload(name, activeMap)
 		if err != nil {
 			m.log.Error("Failed to create/find cost center", "name", name, "error", err)
+			m.log.Warn("Falling back to cost center name as ID — this may cause downstream failures", "name", name)
 			ccMap[name] = name // fallback to name
 			continue
 		}
@@ -443,7 +444,9 @@ func (m *Manager) SyncTeamAssignments(mode string, ignoreCurrentCC bool) (map[st
 
 		// Create budgets for newly-created cost centers.
 		if m.createBudgets && len(newlyCreated) > 0 {
-			m.createBudgetsForNewCCs(ccMap, newlyCreated)
+			if err := m.createBudgetsForNewCCs(ccMap, newlyCreated); err != nil {
+				return nil, fmt.Errorf("creating budgets: %w", err)
+			}
 		}
 	}
 
@@ -470,7 +473,7 @@ func (m *Manager) SyncTeamAssignments(mode string, ignoreCurrentCC bool) (map[st
 		"total_users", totalUsers)
 
 	if mode == "plan" {
-		m.log.Info("MODE=plan: would sync the following assignments:")
+		m.log.Info("mode=plan: would sync the following assignments:")
 		for ccID, users := range idBased {
 			m.log.Info("Would assign", "cost_center", ccID, "users", len(users))
 		}
@@ -696,10 +699,10 @@ func (s *Summary) Print(enterprise string) {
 
 // createBudgetsForNewCCs creates configured budgets for each newly-created
 // cost center.  Stops attempting if the budgets API is unavailable (404).
-func (m *Manager) createBudgetsForNewCCs(ccMap map[string]string, newlyCreated map[string]bool) {
+func (m *Manager) createBudgetsForNewCCs(ccMap map[string]string, newlyCreated map[string]bool) error {
 	if len(m.budgetProducts) == 0 {
 		m.log.Debug("No budget products configured, skipping budget creation")
-		return
+		return nil
 	}
 
 	m.log.Info("Creating budgets for newly-created cost centers",
@@ -712,6 +715,7 @@ func (m *Manager) createBudgetsForNewCCs(ccMap map[string]string, newlyCreated m
 	}
 
 	budgetsDisabled := false
+	var failures []string
 	for ccID := range newlyCreated {
 		if budgetsDisabled {
 			break
@@ -736,6 +740,7 @@ func (m *Manager) createBudgetsForNewCCs(ccMap map[string]string, newlyCreated m
 				}
 				m.log.Error("Failed to create budget",
 					"product", product, "cost_center", ccName, "error", err)
+				failures = append(failures, fmt.Sprintf("%s/%s: %v", ccName, product, err))
 				continue
 			}
 			if ok {
@@ -744,4 +749,9 @@ func (m *Manager) createBudgetsForNewCCs(ccMap map[string]string, newlyCreated m
 			}
 		}
 	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("budget creation failures: %s", strings.Join(failures, "; "))
+	}
+	return nil
 }

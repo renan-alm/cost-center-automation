@@ -215,6 +215,15 @@ github:
   # api_base_url: "https://github.company.com/api/v3"
 ```
 
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | All operations completed successfully |
+| `1`  | One or more operations failed (partial assignment failures, budget creation errors, I/O errors, invalid configuration) |
+
+Partial failures (e.g., 2 of 10 users failed to assign) produce exit code `1` with a summary message indicating the count. This ensures CI/CD pipelines detect incomplete runs.
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -222,6 +231,8 @@ github:
 | 401 / 403 errors | Ensure a valid token is available via `--token`, `GITHUB_TOKEN`, `GH_TOKEN`, `.env`, or `gh auth login`. The token must have enterprise billing admin access. |
 | No teams found | Verify account has `read:org` access for the target orgs |
 | Cost center creation fails | Ensure enterprise billing admin permissions |
+| Exit code 1 on partial failures | Expected behavior — some user assignments or budget creations failed. Check the error summary for details. |
+| Budget API unavailable (404) | The Budgets API may not be enabled for your enterprise. Budget creation is skipped gracefully with a warning. |
 
 Enable debug logging:
 

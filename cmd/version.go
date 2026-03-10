@@ -15,17 +15,22 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version number",
 	Long:  "Display the version of gh-cost-center.",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		// If version is "dev", try to read from VERSION file
 		v := version
 		if v == "dev" {
-			if data, err := os.ReadFile("VERSION"); err == nil {
+			data, err := os.ReadFile("VERSION")
+			if err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("reading VERSION file: %w", err)
+			}
+			if err == nil {
 				if trimmed := strings.TrimSpace(string(data)); trimmed != "" {
 					v = trimmed
 				}
 			}
 		}
 		fmt.Printf("gh-cost-center version %s\n", v)
+		return nil
 	},
 }
 
